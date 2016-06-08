@@ -1,0 +1,329 @@
+#include <stdio.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <errno.h>
+#include <vector>
+#include <string.h>
+#include <iostream>
+
+using namespace std;
+#define maxFileName 90
+#define buffLen 255
+#define dirFileNum 40
+
+class testResult{
+public:
+	char testName[maxFileName];
+	char testTime[30];
+	char iops[30];
+	char lat[30];
+	char latUnit[10];
+	char latStdev[30];
+	testResult();
+	void printData();
+};
+
+testResult::testResult(){
+	memset(testName, 0, sizeof(testName));
+	memset(testTime, 0, sizeof(testTime));
+	memset(iops, 0, sizeof(iops));
+	memset(lat, 0, sizeof(lat));
+	memset(latUnit, 0, sizeof(latUnit));
+	memset(latStdev, 0, sizeof(latStdev));
+}
+
+void testResult::printData(){
+	printf("%s\t%s\t%s\t%s\t%s\t%s\t", testName, testTime, iops, latUnit, lat, latStdev);
+}
+
+int getdir(string dir, vector<string> &files);
+testResult* parseFile(char* fileName);
+void writeResult_list(char* fileName, testResult* result[]);
+void writeResult_iops(char* fileName, testResult* result[]);
+void writeResult_lat(char* fileName, testResult* result[]);
+void unitChange(testResult& result);
+
+int main(int argc, char** argv){
+	char fileName[maxFileName];
+	vector<string> files = vector<string>();
+	
+	testResult* result[dirFileNum];
+	testResult* pPrint;	
+	for(int i=0; i<dirFileNum; i++)
+		result[i] = NULL;
+
+	if(argc != 2){
+		printf("Input file directorys\n");
+		return 1;
+	}
+
+	printf("dir:%s\n", argv[1]);
+	getdir(argv[1], files);
+
+	//輸出資料夾和檔案名稱於螢幕
+	for(int i=0; i< (files.size()<dirFileNum?files.size():dirFileNum); i++){
+//		printf("%s \n", files[i].c_str());
+
+		//Create Read File Name
+		memset(fileName, 0, maxFileName);
+		strcpy(fileName, argv[1]);
+//		strcat(fileName,"/");
+		strcat(fileName,files[i].c_str());
+//		printf("fileName:%s\n", fileName);
+		
+		if((result[i]=parseFile(fileName)) == NULL)//error
+			continue;
+	}
+/*
+	//Output Analysis Result
+	for(int i=0; i<dirFileNum; i++){
+		pPrint = result[i];
+		if(pPrint != NULL)
+			for(int j=0; j<20; j++)
+				if(pPrint[j].testName[0] != 0){
+//					printf("i=%d, j=%d\n", i, j);
+					pPrint[j].printData();
+					printf("\n");
+				}
+	}
+*/
+	//Write Result
+	memset(fileName, 0, maxFileName);
+	strcpy(fileName, "tmp.txt");
+	writeResult_list(fileName, result);
+
+	memset(fileName, 0, maxFileName);
+	strcpy(fileName, "iops.txt");
+	writeResult_iops(fileName, result);
+
+	memset(fileName, 0, maxFileName);
+	strcpy(fileName, "lat.txt");
+	writeResult_lat(fileName, result);
+
+	return 0;
+}
+
+int getdir(string dir, vector<string> &files){
+	DIR *dp;//創立資料夾指標
+	struct dirent *dirp;
+	if((dp = opendir(dir.c_str())) == NULL){
+		cout << "Error(" << errno << ") opening " << dir << endl;
+		return errno;
+	}
+	while((dirp = readdir(dp)) != NULL){//如果dirent指標非空
+		if( strcmp(dirp->d_name, ".") ==0 || strcmp(dirp->d_name, "..") ==0)
+			continue;		
+		files.push_back(string(dirp->d_name));//將資料夾和檔案名放入vector
+	}
+	closedir(dp);//關閉資料夾指標
+	return 0;
+}
+
+testResult* parseFile(char* fileName){
+	char buff[buffLen];
+	char ch;
+	FILE *fp;
+	testResult* result = new testResult[20];
+	int i=-1;
+	char* pName;
+	char* pStart;
+	char* pEnd;
+	
+	pName = strrchr(fileName, '/');	
+	if((fp = fopen(fileName, "r")) == NULL){
+		cout << "Error(" << errno << ") opening " << fileName << endl;
+		delete result;
+		return NULL;
+	}
+//	memset(buff, 0, buffLen);
+//	memcpy(buff, fp, buffLen);	
+//	printf("read=%s;\n", buff);
+//	while( ( ch = fgetc(fp) ) != EOF )
+//	ch = fgetc(fp);
+	while (fgets(buff, buffLen, fp) != NULL){
+//		printf("%s", buff);
+		if(strstr(buff, "err") != NULL){//start record a new data
+			i++;
+			strcpy(result[i].testName, pName+1);
+//			printf("testName:%s\n", result[i].testName);
+			pStart = strstr(buff, " pid");
+			pStart = strchr(pStart, ':');
+			pStart += sizeof(": ")-1;
+			pEnd = strstr(pStart, "2016");
+			pEnd += sizeof("2016")-1;
+			memcpy(result[i].testTime, pStart, pEnd-pStart);
+//			printf("testTime:%s\n", result[i].testTime);
+		}
+		if(strstr(buff, "iops=") != NULL){
+			pStart = strstr(buff, " iops=");
+			pStart += sizeof(" iops=")-1;
+			pEnd = strchr(pStart, ',');
+			memcpy(result[i].iops, pStart, pEnd-pStart);
+//			printf("iops:%s\n", result[i].iops);
+		}
+		if(strstr(buff, "lat") != NULL && strstr(buff, "avg")!= NULL){
+			pStart = strchr(buff, '(');
+			pStart += 1;
+			pEnd = strchr(pStart, ')');
+			memcpy(result[i].latUnit, pStart, pEnd-pStart);
+//			printf("latUnit:%s\n", result[i].latUnit);
+
+			pStart = strstr(buff, "avg=");
+			pStart += sizeof("avg=")-1;
+			pEnd = strchr(pStart, ',');
+			memcpy(result[i].lat, pStart, pEnd-pStart);
+//			printf("lat:%s\n", result[i].lat);
+
+			pStart = strstr(buff, "stdev=");
+			pStart += sizeof("stdev=")-1;
+			pEnd = strchr(pStart, '\n');
+			memcpy(result[i].latStdev, pStart, pEnd-pStart);
+//			printf("latStdev:%s\n", result[i].latStdev);
+		}
+	}
+	fclose(fp);
+	return result;
+}
+
+void writeResult_list(char* fileName, testResult* result[]){
+	FILE *fp;
+	testResult* pPrint;
+
+	if((fp = fopen(fileName, "w")) == NULL){
+		cout << "Error(" << errno << ") opening " << fileName << endl;
+		return;
+	}
+	for(int i=0; i<dirFileNum; i++){
+		pPrint = result[i];
+		if(pPrint != NULL)
+			for(int j=0; j<20; j++)
+				if(pPrint[j].testName[0] != 0){
+//					printf("i=%d, j=%d\n", i, j);
+//					pPrint[j].printData();
+					fprintf(fp, "%s\t%s\t%s\t%s\t%s\t%s\t", pPrint[j].testName, pPrint[j].testTime, pPrint[j].iops, pPrint[j].latUnit, pPrint[j].lat, pPrint[j].latStdev);
+					fprintf(fp, "\n");
+				}
+	}
+	fclose(fp);
+}
+
+void writeResult_iops(char* fileName, testResult* result[]){
+	FILE *fp;
+	testResult* pPrint;
+
+	if((fp = fopen(fileName, "w")) == NULL){
+		cout << "Error(" << errno << ") opening " << fileName << endl;
+		return;
+	}
+	for(int i=0; i<dirFileNum; i++){
+		pPrint = result[i];
+		if(pPrint != NULL){
+			if(pPrint[0].testName[0] != 0){
+				fprintf(fp, "%s\tIOPs\t", pPrint[0].testName);
+				for(int j=0; j<20; j++){
+					if(pPrint[j].testName[0] != 0){
+						fprintf(fp, "%s\t", pPrint[j].iops);
+					
+					}
+				}
+				fprintf(fp, "\n");
+			}
+		}
+	}
+	fclose(fp);
+}
+
+void writeResult_lat(char* fileName, testResult* result[]){
+	FILE *fp;
+	testResult* pPrint;
+
+//printf("writeResult_lat\n");
+	if((fp = fopen(fileName, "w")) == NULL){
+		cout << "Error(" << errno << ") opening " << fileName << endl;
+		return;
+	}
+	for(int i=0; i<dirFileNum; i++){
+//printf("for i=%d\n", i);
+		pPrint = result[i];
+		if(pPrint != NULL){
+			if(pPrint[0].testName[0] != 0){
+				fprintf(fp, "%s\tLatency\tmsec\t", pPrint[0].testName);
+				for(int j=0; j<20; j++){
+					if(pPrint[j].testName[0] != 0){
+						unitChange(pPrint[j]);
+						fprintf(fp, "%s\t", pPrint[j].lat);
+					
+					}
+				}
+				fprintf(fp, "\n");
+			}
+		}
+	}
+	fclose(fp);
+}
+
+void unitChange(testResult& result){
+	char* pDot;
+	char* pFlt;
+	char c[2];
+	char intPart[30], fltPart[30];
+//printf("value=%s latUnit=%s\n", result.lat, result.latUnit);
+	memset(intPart, 0, sizeof(intPart));
+	memset(fltPart, 0, sizeof(fltPart));
+	if(strcmp(result.latUnit, "msec")==0){
+		//modify unit
+		strcpy(result.latUnit, "usec");
+
+		//modify latency
+		if((pDot = strchr(result.lat, '.')) == NULL){
+//printf("if lat without Dot\n");
+			strcat(result.lat, "000");
+		}else{
+			memcpy(intPart, result.lat, pDot-result.lat);
+			strcpy(fltPart, pDot+1);
+//printf("value=%s, ipart=%s, fpart=%s\n", result.lat, intPart, fltPart);
+			pFlt = fltPart;
+			for(int i=0;i<3; i++){
+				if(*pFlt != 0){
+					c[0] = *pFlt;
+					c[1] = 0;
+					strcat(intPart, c);
+					pFlt++;
+				}else{
+					strcat(intPart, "0");
+				}
+			}
+//printf("value=%s, ipart=%s, fpart=%s\n", result.lat, intPart, pFlt);
+			strcpy(result.lat, intPart);
+			if(*pFlt != 0){
+				strcat(result.lat, ".");
+				strcat(result.lat, pFlt);
+			}
+//printf("latency=%s\n", result.lat);
+		}
+
+		//modify latency standard deviation
+		if((pDot = strchr(result.latStdev, '.')) == NULL){
+			strcat(result.latStdev, "000");
+		}else{
+			memcpy(intPart, result.latStdev, pDot-result.latStdev);
+			strcpy(fltPart, pDot+1);
+			pFlt = fltPart;
+			for(int i=0;i<3; i++){
+				if(*pFlt != 0){
+					c[0] = *pFlt;
+					c[1] = 0;
+					strcat(intPart, c);
+					pFlt++;
+				}else{
+					strcat(intPart, "0");
+				}
+			}
+			strcpy(result.latStdev, intPart);
+			if(*pFlt != 0){
+				strcat(result.latStdev, ".");
+				strcat(result.latStdev, pFlt);
+			}
+		}
+	}
+}
